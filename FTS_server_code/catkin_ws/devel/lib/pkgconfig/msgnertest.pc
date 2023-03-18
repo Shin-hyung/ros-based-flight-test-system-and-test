@@ -1,0 +1,8 @@
+prefix=/home/xavier/catkin_ws/devel
+
+Name: msgnertest
+Description: Description of msgnertest
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

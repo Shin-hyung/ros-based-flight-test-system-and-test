@@ -1,0 +1,6 @@
+<launch>
+<group ns="rocket">
+<!-- <node pkg="fme_core" type="fme_core_sensor_node" name="imu"/ -->
+<node pkg="fme_core" type="fme_core_control_node" name="fc"/>
+</group>
+</launch>

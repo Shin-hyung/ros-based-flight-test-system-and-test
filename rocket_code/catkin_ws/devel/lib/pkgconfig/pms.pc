@@ -1,0 +1,8 @@
+prefix=/home/rocket/catkin_ws/devel
+
+Name: pms
+Description: Description of pms
+Version: 0.0.1
+Cflags: -I/home/rocket/catkin_ws/src/pms/include
+Libs: -L${prefix}/lib -lpms
+Requires: roscpp serial sensor_msgs std_msgs std_srvs geometry_msgs

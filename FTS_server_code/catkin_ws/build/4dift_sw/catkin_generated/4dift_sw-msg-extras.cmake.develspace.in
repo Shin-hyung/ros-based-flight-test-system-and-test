@@ -1,0 +1,2 @@
+set(4dift_sw_MESSAGE_FILES "/home/xavier/catkin_ws/src/4dift_sw/msg/state.msg")
+set(4dift_sw_SERVICE_FILES "")

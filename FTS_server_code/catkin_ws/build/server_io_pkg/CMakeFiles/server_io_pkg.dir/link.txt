@@ -1,0 +1,1 @@
+/usr/bin/cc -fPIC -shared -Wl,-soname,libserver_io_pkg.so -o /home/xavier/catkin_ws/devel/lib/libserver_io_pkg.so CMakeFiles/server_io_pkg.dir/src/api/vl53l1_linux_platform.c.o 

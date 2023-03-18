@@ -1,0 +1,8 @@
+prefix=/home/rocket/catkin_ws/devel
+
+Name: pms_test
+Description: Description of pms_test
+Version: 0.0.1
+Cflags: -I/home/rocket/catkin_ws/src/pms_test/include
+Libs: -L${prefix}/lib -lpms_test
+Requires: roscpp serial sensor_msgs std_msgs std_srvs geometry_msgs

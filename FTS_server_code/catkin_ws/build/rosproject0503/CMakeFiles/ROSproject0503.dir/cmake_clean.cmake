@@ -1,0 +1,41 @@
+file(REMOVE_RECURSE
+  "/home/xavier/catkin_ws/devel/lib/rosproject0503/ROSproject0503"
+  "/home/xavier/catkin_ws/devel/lib/rosproject0503/ROSproject0503.pdb"
+  "CMakeFiles/ROSproject0503.dir/src/ROSproject0503.cpp.o"
+  "CMakeFiles/ROSproject0503.dir/src/ROSproject0503.cpp.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/ROSproject0503_data.cpp.o"
+  "CMakeFiles/ROSproject0503.dir/src/ROSproject0503_data.cpp.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/ext_svr.c.o"
+  "CMakeFiles/ROSproject0503.dir/src/ext_svr.c.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/ext_work.c.o"
+  "CMakeFiles/ROSproject0503.dir/src/ext_work.c.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/main.cpp.o"
+  "CMakeFiles/ROSproject0503.dir/src/main.cpp.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/rosnodeinterface.cpp.o"
+  "CMakeFiles/ROSproject0503.dir/src/rosnodeinterface.cpp.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/rtGetInf.cpp.o"
+  "CMakeFiles/ROSproject0503.dir/src/rtGetInf.cpp.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/rtGetNaN.cpp.o"
+  "CMakeFiles/ROSproject0503.dir/src/rtGetNaN.cpp.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/rt_nonfinite.cpp.o"
+  "CMakeFiles/ROSproject0503.dir/src/rt_nonfinite.cpp.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/rtiostream_interface.c.o"
+  "CMakeFiles/ROSproject0503.dir/src/rtiostream_interface.c.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/rtiostream_tcpip.c.o"
+  "CMakeFiles/ROSproject0503.dir/src/rtiostream_tcpip.c.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/rtiostream_utils.c.o"
+  "CMakeFiles/ROSproject0503.dir/src/rtiostream_utils.c.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/slros_busmsg_conversion.cpp.o"
+  "CMakeFiles/ROSproject0503.dir/src/slros_busmsg_conversion.cpp.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/slros_generic_param.cpp.o"
+  "CMakeFiles/ROSproject0503.dir/src/slros_generic_param.cpp.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/slros_initialize.cpp.o"
+  "CMakeFiles/ROSproject0503.dir/src/slros_initialize.cpp.o.d"
+  "CMakeFiles/ROSproject0503.dir/src/updown.c.o"
+  "CMakeFiles/ROSproject0503.dir/src/updown.c.o.d"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang C CXX)
+  include(CMakeFiles/ROSproject0503.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

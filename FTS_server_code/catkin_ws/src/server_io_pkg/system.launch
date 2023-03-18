@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<launch>
+  <!-- Start system nodes -->
+  <node pkg="server_io_pkg" type="server_io_pkg_node" name="server_io_pkg_node"></node>
+  <node pkg="server_io_pkg" type="server_i_pkg_node" name="server_i_pkg_node"></node>
+  <node pkg="server_io_pkg" type="server_o_pkg_node" name="server_o_pkg_node"></node>
+  <node pkg="server_io_pkg" type="server_zpos_pkg_node" name="server_zpos_pkg_node"></node>
+
+</launch>

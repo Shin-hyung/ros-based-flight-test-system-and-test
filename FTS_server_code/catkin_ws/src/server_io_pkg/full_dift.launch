@@ -1,0 +1,8 @@
+<launch>
+	<group>
+		<node pkg="server_io_pkg" type="server_io_pkg_node" name="loadcell"/>
+		<node pkg="server_io_pkg" type="server_i_pkg_node" name="ridar"/>
+		<node pkg="server_io_pkg" type="server_o_pkg_node" name="motor"/>
+		<node pkg="server_io_pkg" type="server_zpos_pkg_node" name="zpos_estimater"/>
+	</group>
+</launch>

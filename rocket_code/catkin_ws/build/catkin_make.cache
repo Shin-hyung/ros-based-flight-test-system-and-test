@@ -1,0 +1,2 @@
+fme_core:pms
+-DCATKIN_DEVEL_PREFIX=/home/rocket/catkin_ws/devel -DCMAKE_INSTALL_PREFIX=/home/rocket/catkin_ws/install -G Unix Makefiles

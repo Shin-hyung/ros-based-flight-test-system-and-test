@@ -1,0 +1,8 @@
+prefix=/home/xavier/catkin_ws/install
+
+Name: rosproject0503
+Description: Description of rosproject0503
+Version: 1.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: roscpp std_msgs

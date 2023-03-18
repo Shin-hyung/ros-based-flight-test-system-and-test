@@ -1,0 +1,9 @@
+Catkin project directory: /home/xavier/catkin_ws/src/test
+Base path: /home/xavier/catkin_ws
+Source space: /home/xavier/catkin_ws/src
+Build space: /home/xavier/catkin_ws/build
+Devel space: /home/xavier/catkin_ws/devel
+Install space: /home/xavier/catkin_ws/install
+Multiple packages found with the same name "tutorial":
+- jigsys
+- tutorial

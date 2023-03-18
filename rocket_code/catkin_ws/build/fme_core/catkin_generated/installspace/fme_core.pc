@@ -1,0 +1,8 @@
+prefix=/home/rocket/catkin_ws/install
+
+Name: fme_core
+Description: Description of fme_core
+Version: 0.0.1
+Cflags: -I${prefix}/include
+Libs: -L${prefix}/lib -lfme_core
+Requires: roscpp serial sensor_msgs std_msgs std_srvs geometry_msgs

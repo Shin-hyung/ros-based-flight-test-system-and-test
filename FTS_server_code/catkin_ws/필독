@@ -1,0 +1,3 @@
+rosrun으로 패키지 실행 안 될때
+$ source ~/catkin_ws/devel/setup.bash
+실행해보기

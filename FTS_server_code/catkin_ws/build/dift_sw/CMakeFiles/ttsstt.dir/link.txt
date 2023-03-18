@@ -1,0 +1,1 @@
+/usr/bin/c++ -rdynamic CMakeFiles/ttsstt.dir/src/ttsstt.cpp.o -o /home/xavier/catkin_ws/devel/lib/dift_sw/ttsstt 

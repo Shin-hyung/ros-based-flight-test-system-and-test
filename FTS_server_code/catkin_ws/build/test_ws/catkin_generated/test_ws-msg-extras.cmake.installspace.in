@@ -1,0 +1,2 @@
+set(test_ws_MESSAGE_FILES "msg/Num.msg")
+set(test_ws_SERVICE_FILES "")

@@ -1,0 +1,2 @@
+rosbag_to_csv:server_io_pkg
+-DCATKIN_DEVEL_PREFIX=/home/xavier/catkin_ws/devel -DCMAKE_INSTALL_PREFIX=/home/xavier/catkin_ws/install -G Unix Makefiles

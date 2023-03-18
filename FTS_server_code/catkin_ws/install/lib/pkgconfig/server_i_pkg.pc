@@ -1,0 +1,8 @@
+prefix=/home/xavier/catkin_ws/install
+
+Name: server_i_pkg
+Description: Description of server_i_pkg
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

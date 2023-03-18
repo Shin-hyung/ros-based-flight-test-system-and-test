@@ -1,0 +1,807 @@
+#include "ros/ros.h"
+#include "std_srvs/Empty.h"
+#include "std_srvs/SetBool.h"
+#include "sensor_msgs/Imu.h"
+#include "geometry_msgs/Pose.h"
+#include "geometry_msgs/Quaternion.h"
+#include "geometry_msgs/Point.h"
+#include "geometry_msgs/Vector3.h"
+#include <tic.hpp>
+#include <cmath>
+#include <math.h>
+#include <string>
+#include <sstream>
+#include <functional>
+#include <numeric>
+#include <vector>
+#include "serial/serial.h"
+#include "sensor_msgs/Imu.h"
+#include "std_srvs/Empty.h"
+#include "std_msgs/Empty.h"
+#include <string>
+#include <cmath>
+#include <algorithm>
+
+#define _USE_MATH_DEFINES
+#define GEE 9.80665
+#define ADJUST_ROLL_DEG -1.5
+#define ADJUST_PITCH_DEG -5
+#define ADJUST_YAW_DEG -80
+//uart 통신 클래스 생성;
+serial::Serial uart;
+ros::Publisher euler_angle;
+ros::Publisher euler_angle_error;
+ros::Publisher euler_angle_target;
+bool request_set_zro = false;
+#define _USE_MATH_DEFINES
+#define FIN_AREA 0.01125 //m2
+#define FIN_RAD_PER_CL 0.15901323359947 //rad/cl
+#define FIN_ALPHA_LIMIT 0.35//20도, cl 꺽이는 지점
+#define FIN_ADJUST_ANG 0.015708//0.9도
+#define AIRSPEED 7//m/s
+double RAD2DEG (double a  ){
+	return a * 180.0/3.141592;
+
+}
+
+using namespace std;
+
+geometry_msgs::Quaternion Q_E();
+geometry_msgs::Quaternion Q_E(geometry_msgs::Quaternion t, geometry_msgs::Quaternion c);
+geometry_msgs::Vector3 Q2E(geometry_msgs::Quaternion q);
+geometry_msgs::Vector3 Q2E(geometry_msgs::Quaternion q, bool deg);
+geometry_msgs::Quaternion Q_Inv(geometry_msgs::Quaternion o);
+geometry_msgs::Quaternion E2Q(geometry_msgs::Vector3 u);
+geometry_msgs::Quaternion E2Q(geometry_msgs::Point u);
+double inp(std::vector<double> a, std::vector<double> b);
+
+std::vector<double> finangle{0,0,0,0};
+std::vector<double> alpha{0,0,0,0};
+std::vector<double> angle{0,0,0};
+
+struct{
+	std::vector<std::vector<double>>k
+	{	//	 P I D
+		//* DEBUG
+			{5,5,0},//Rpi
+			{5,1,0},//Ppi
+			{5,1,0},//Ypi
+			{10,0,10},//Rpd
+			{5,0,5},//Ppd
+			{5,0,5},//Ypd
+		/*
+		{0,0,0},
+		{0,0,0},
+		{0,0,0},
+		{0,0,0},
+		{0,0,0},
+		{0,0,0},
+		*/
+	};//xyz-rpy
+	bool data_changed=false;
+}controller;
+
+struct{
+	sensor_msgs::Imu imu;
+	geometry_msgs::Pose zro;
+	struct{
+		double density = 1.2;//kg/m3
+		geometry_msgs::Vector3 size;//xyz cord, m/s
+	}air;
+	struct{
+		double weight = 2.8;//kg
+		double length = 2.8;//m
+		double diameter = 0.1;//m
+		double CG_D[3] = {0.08, 0.8, 0.8};
+		double Inerthia[3]={//Ix,Iy,Iz for temporor
+			//DEBUG *4 to added counterweight
+			4*weight*diameter*diameter/8,
+			weight*length*length/12,
+			weight*length*length/12};
+	}body;
+	bool data_changed=false;
+}sensor;
+struct{
+	geometry_msgs::Pose pose;
+	geometry_msgs::Pose poserror;
+        bool request_set_zro = true;
+        bool request_set_start = false;
+	bool pid_rst_trigger = false;
+	bool request_toggle_energize[2] = {false, false};//set unset
+	bool contorol = false;
+}target;
+class Fin{
+	//wing 특성
+	double radpcl = FIN_RAD_PER_CL;
+	double finarea = FIN_AREA;
+	double alpha_limit = FIN_ALPHA_LIMIT;
+	//stepper moter 특성
+	long div = 128;
+	double rad2p = (double)div*100/M_PI;
+	long maxspeed = 256000000;//25600.0000 p/s
+	long maxaccel = 25600000;//25600.0000 p/s
+	long maxangle = 12800;//25600.0000 p/s
+	tic::handle htic;
+	public:
+	double adjust_angle = FIN_ADJUST_ANG;
+	Fin(const char* in_id){
+		//pololu API USB 설정;
+		try{
+			htic = open_handle(in_id);
+		}
+		catch(const std::exception & error){
+			ROS_ERROR("%s", error.what());
+		}
+		this->energize(false);
+	};
+	void energize(bool set){
+		if(set){
+			htic.energize();
+		}else{
+			htic.deenergize();
+		}
+	};
+	double get_alpha(double force, double airspeed){
+		geometry_msgs::Vector3 air; air.x = airspeed;
+		double v = sqrt(air.x*air.x + air.y*air.y + air.z*air.z);
+		return radpcl*(force/(0.5*sensor.air.density*v*v*finarea));
+	};
+	double get_alpha(double force){
+		geometry_msgs::Vector3 air = sensor.air.size;
+		double v = sqrt(air.x*air.x + air.y*air.y + air.z*air.z);
+		return radpcl*(force/(0.5*sensor.air.density*v*v*finarea));
+	};
+	double get_angle_limited(double force, double airspeed){
+		double result = this->get_alpha(force,airspeed);
+		if(result>alpha_limit){
+			result = alpha_limit;
+		}
+		if(result<-alpha_limit){
+			result = -alpha_limit;
+		}
+		return result;
+	}
+	double get_angle_limited(double force){
+		double result = this->get_alpha(force);
+		if(result>alpha_limit){
+			result = alpha_limit;
+		}
+		if(result<-alpha_limit){
+			result = -alpha_limit;
+		}
+		return result;
+	}
+	void set_angle(double angle){
+		int32_t setpoint = round(angle*rad2p + this->adjust_angle*rad2p); //
+		htic.exit_safe_start();
+		htic.set_target_position(setpoint);
+	}
+	tic::handle open_handle(const char* serial){
+		std::vector<tic::device> list = tic::list_connected_devices();
+		for(const tic::device & device : list){
+			if(serial && device.get_serial_number() != serial){
+				continue;
+			}
+			return tic::handle(device);
+		}
+		throw std::runtime_error("No device found");
+	}
+};
+
+void target_pose_update_callback(const geometry_msgs::Pose::ConstPtr& msg){
+	target.pose.orientation.x = msg->orientation.x;
+	target.pose.orientation.y = msg->orientation.y;
+	target.pose.orientation.z = msg->orientation.z;
+	target.pose.orientation.w = msg->orientation.w;
+	target.poserror.orientation = Q_E();
+	sensor.data_changed=true;
+	geometry_msgs::Vector3 euler_angle_target_msg = Q2E(target.pose.orientation,true);
+	euler_angle_target.publish(euler_angle_target_msg);
+	geometry_msgs::Vector3 euler_angle_error_msg = Q2E(target.poserror.orientation,true);
+	euler_angle_error.publish(euler_angle_error_msg);
+}
+void sensor_pose_update(sensor_msgs::Imu msg){
+	sensor.imu.header.seq = msg.header.seq;
+	sensor.imu.header.stamp = msg.header.stamp;
+	sensor.imu.header.frame_id = msg.header.frame_id;
+	sensor.imu.linear_acceleration.x = msg.linear_acceleration.x;
+	sensor.imu.linear_acceleration.y = msg.linear_acceleration.y;
+	sensor.imu.linear_acceleration.z = msg.linear_acceleration.z;
+	sensor.imu.angular_velocity.x = msg.angular_velocity.x;
+	sensor.imu.angular_velocity.y = msg.angular_velocity.y;
+	sensor.imu.angular_velocity.z = msg.angular_velocity.z;
+	sensor.imu.orientation.x = msg.orientation.x;
+	sensor.imu.orientation.y = msg.orientation.y;
+	sensor.imu.orientation.z = msg.orientation.z;
+	sensor.imu.orientation.w = msg.orientation.w;
+	target.poserror.orientation = Q_E();
+	geometry_msgs::Vector3 euler_angle_error_msg = Q2E(target.poserror.orientation,true);
+	euler_angle_error.publish(euler_angle_error_msg);
+	sensor.data_changed=true;
+}
+void sensor_pose_update_callback(const sensor_msgs::Imu::ConstPtr& msg){
+	sensor.imu.header.seq = msg->header.seq;
+	sensor.imu.header.stamp = msg->header.stamp;
+	sensor.imu.header.frame_id = msg->header.frame_id;
+	sensor.imu.linear_acceleration.x = msg->linear_acceleration.x;
+	sensor.imu.linear_acceleration.y = msg->linear_acceleration.y;
+	sensor.imu.linear_acceleration.z = msg->linear_acceleration.z;
+	sensor.imu.angular_velocity.x = msg->angular_velocity.x;
+	sensor.imu.angular_velocity.y = msg->angular_velocity.y;
+	sensor.imu.angular_velocity.z = msg->angular_velocity.z;
+	sensor.imu.orientation.x = msg->orientation.x;
+	sensor.imu.orientation.y = msg->orientation.y;
+	sensor.imu.orientation.z = msg->orientation.z;
+	sensor.imu.orientation.w = msg->orientation.w;
+	target.poserror.orientation = Q_E();
+	geometry_msgs::Vector3 euler_angle_error_msg = Q2E(target.poserror.orientation,true);
+	euler_angle_error.publish(euler_angle_error_msg);
+	sensor.data_changed=true;
+}
+
+void launch_callback(const std_msgs::Empty::ConstPtr& msg){
+	
+}
+
+
+
+
+double inp(std::vector<double> a, std::vector<double> b){//dot product
+	return std::inner_product(a.begin(), a.end(), b.begin(),0);
+}
+
+std::vector<double> oup3(std::vector<double> a, std::vector<double> b){//cross product of 3
+	std::vector<double> c{a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]};
+	return c;
+}
+std::vector<double> vep(std::vector<double> a, std::vector<double> b){//vector add
+	std::transform (a.begin(), a.end(), b.begin(), a.begin(), std::plus<>{});
+	return a;
+}
+std::vector<double> slp(double a, std::vector<double> b){//sclar mult
+	std::transform (b.begin(), b.end(), b.begin(), std::bind2nd(std::plus<double>(), a));
+	return b;
+}
+
+geometry_msgs::Quaternion Q_E(){
+	geometry_msgs::Quaternion t, c, e;
+	c.x = sensor.imu.orientation.x;
+	c.y = sensor.imu.orientation.y;
+	c.z = sensor.imu.orientation.z;
+	c.w = sensor.imu.orientation.w;
+	t.x = target.pose.orientation.x;
+	t.y = target.pose.orientation.y;
+	t.z = target.pose.orientation.z;
+	t.w = target.pose.orientation.w;
+
+	std::vector<double> t_v{t.x, t.y, t.z};
+	std::vector<double> c_v{c.x, c.y, c.z};
+	std::vector<double> e_v;
+	e_v = vep(vep(slp(-t.w, c_v),slp(c.w, t_v)), oup3(t_v,c_v));//벡터항 계산
+
+	e.x=e_v[0];
+	e.y=e_v[1];
+	e.z=e_v[2];
+	e.w = t.w*c.w - inp(t_v,c_v);//스칼라항 계산
+	return e;
+} 
+geometry_msgs::Quaternion Q_E(geometry_msgs::Quaternion t, geometry_msgs::Quaternion c){
+	geometry_msgs::Quaternion e;
+
+	std::vector<double> t_v{t.x, t.y, t.z};
+	std::vector<double> c_v{c.x, c.y, c.z};
+	std::vector<double> e_v;
+	e_v = vep(vep(slp(-t.w, c_v),slp(c.w, t_v)), oup3(t_v,c_v));//벡터항 계산
+
+	e.x=e_v[0];
+	e.y=e_v[1];
+	e.z=e_v[2];
+	e.w = t.w*c.w - inp(t_v,c_v);//스칼라항 계산
+	return e;
+} 
+geometry_msgs::Vector3 Q2E(geometry_msgs::Quaternion q, bool deg){
+	geometry_msgs::Vector3 E = Q2E(q);
+	if(deg){
+		E.x = E.x*180.0/M_PI;
+		E.y = E.y*180.0/M_PI;
+		E.z = E.z*180.0/M_PI;
+	}
+	return E;
+}
+geometry_msgs::Vector3 Q2E(geometry_msgs::Quaternion q) {
+	geometry_msgs::Vector3 angles;
+
+	// roll (x-axis rotation)
+	double sinr_cosp = 2 * (q.w * q.x + q.y * q.z);
+	double cosr_cosp = 1 - 2 * (q.x * q.x + q.y * q.y);
+	angles.x = std::atan2(sinr_cosp, cosr_cosp);
+
+	// pitch (y-axis rotation)
+	double sinp = 2 * (q.w * q.y - q.z * q.x);
+	if (std::abs(sinp) >= 1){
+	angles.y = std::copysign(M_PI / 2, sinp); // use 90 degrees if out of range
+	}else{
+	angles.y = std::asin(sinp);
+	}
+
+	// yaw (z-axis rotation)
+	double siny_cosp = 2 * (q.w * q.z + q.x * q.y);
+	double cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z);
+	angles.z = std::atan2(siny_cosp, cosy_cosp);
+
+	return angles;
+}
+geometry_msgs::Quaternion E2Q(geometry_msgs::Point u){
+	geometry_msgs::Vector3 a;
+	a.x = u.x;
+	a.y = u.y;
+	a.z = u.z;
+	return E2Q(a);
+}
+geometry_msgs::Quaternion E2Q(geometry_msgs::Vector3 u){
+	geometry_msgs::Quaternion q;
+	double r = u.x, p = u.y, y = u.z;
+	q.w = cos(y/2)*cos(p/2)*cos(r/2) + sin(y/2)*sin(p/2)*sin(r/2);
+	q.x = cos(y/2)*cos(p/2)*sin(r/2) - sin(y/2)*sin(p/2)*cos(r/2);
+	q.y = cos(y/2)*sin(p/2)*cos(r/2) + sin(y/2)*cos(p/2)*sin(r/2);
+	q.z = sin(y/2)*cos(p/2)*cos(r/2) - cos(y/2)*sin(p/2)*sin(r/2);
+	return q;
+}
+
+geometry_msgs::Quaternion Q_Inv(geometry_msgs::Quaternion o){
+	geometry_msgs::Quaternion r;
+	double size2 = o.x*o.x + o.y*o.y + o.z*o.z + o.w*o.w;
+	r.x = -o.x/size2;
+	r.y = -o.y/size2;
+	r.z = -o.z/size2;
+	r.w = o.w/size2;
+	return r;
+}
+
+geometry_msgs::Vector3 VQV(geometry_msgs::Vector3 o, geometry_msgs::Quaternion q){
+	geometry_msgs::Vector3 r;
+	r.x = 	  o.x*(q.w*q.w + q.x*q.x - q.y*q.y - q.z*q.z)
+		+ o.y*(q.x*q.y - q.w*q.z)*2
+		+ o.z*(q.x*q.z + q.w*q.y)*2
+	;
+	r.y = 	  o.x*(q.x*q.y + q.w*q.z)*2
+		+ o.y*(q.w*q.w - q.x*q.x + q.y*q.y - q.z*q.z)
+		+ o.z*(q.y*q.z - q.w*q.x)*2
+	;
+	r.z =	  o.x*(q.x*q.z - q.w*q.y)*2
+		+ o.y*(q.y*q.z + q.w*q.x)*2
+		+ o.z*(q.w*q.w - q.x*q.x - q.y*q.y + q.z*q.z)
+	;
+	return r;
+}
+class PID{
+	double kp, ki, kd;
+	double toterror, prerror, pred;
+	ros::Time stamp;
+	public:
+	double ifanceval = 10000000;
+	double Nval = 5;
+	double hpfintg=0;
+	PID(double kp, double ki, double kd){
+		this->kp = kp;
+		this->ki = ki;
+		this->kd = kd;
+		toterror = 0;
+		prerror = 0;
+		pred = 0;
+		stamp = ros::Time::now();
+	};	
+	private:
+	void ifance(double value){
+		ifanceval = value;
+	}
+	void ifance(){
+		if(this->toterror>ifanceval)
+			this->toterror = ifanceval;
+		if(this->toterror<-ifanceval)
+			this->toterror = -ifanceval;
+	}
+	public:
+	double run(double e, double der, ros::Time stamp){
+		double P, I, D;
+		double dt = stamp.toSec() - this->stamp.toSec();
+		toterror += dt*e;
+		ifance();
+
+		P = kp*e;
+		I = ki*toterror;
+		D = (kd*der - hpfintg)*Nval;
+		hpfintg += (D * prerror)*dt/2.0f;
+
+		this->prerror = der;
+		this->stamp = stamp;
+
+		return P+I+D;
+	}
+	double run(double e, ros::Time stamp){
+		double P, I, D;
+		double dt = stamp.toSec() - this->stamp.toSec();
+		double de = e - this->prerror;
+		toterror += dt*e;
+		ifance();
+
+		P = kp*e;
+		I = ki*toterror;
+		//D = (kd*e - hpfintg)*Nval;
+		//hpfintg += (D * prerror)*dt/2.0f;
+		D = (1/(1+Nval*dt))*this->pred + (1/(1+Nval*dt))*kd*de;
+
+		this->pred = D;
+		this->prerror = e;
+		this->stamp = stamp;
+
+		return P+I+D;
+	}
+	void rst(){
+		this->toterror = 0;
+		this->prerror= 0;
+		stamp = ros::Time::now();
+	}
+};
+
+bool zro_callback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res){
+        ROS_INFO("zro");
+        target.request_set_zro = true;
+	request_set_zro = true;
+        return true;
+}
+bool start_callback(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res){
+        ROS_INFO("start");
+	if(req.data){
+		target.request_set_start = true;
+		target.pid_rst_trigger = true;
+	}else{
+		target.request_set_start = false;
+	}
+        return true;
+}
+bool energize_callback(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res){
+	target.request_toggle_energize[req.data] = true;
+	return true;
+}
+
+int main(int argc, char **argv){
+	std::string arg;
+	sensor_msgs::Imu imu_msg; // senser msg 선언;
+	//ros node 초기화;
+	ros::init(argc, argv, "rocket_fcc");
+	//ros ndoe 실행;
+	ros::NodeHandle node;
+	//uart 연결 시도
+	try{
+		uart.setPort("/dev/ttyUSB0");
+		uart.setBaudrate(115200);
+		serial::Timeout tot = serial::Timeout::simpleTimeout(1000);
+		uart.setTimeout(tot);
+		uart.open();
+		uart.write("ss=0\n");
+		uart.readline();
+	}catch(serial::IOException& e){// uart 연결 실패시(누가 사용하는 경우 등);
+		ROS_ERROR("Unable to port");
+		return -1;
+	}
+	
+	if(uart.isOpen()){// uart 연결 성공시;
+		ROS_INFO("Serial Port initiaized");
+	}else{
+		return -1;
+	}
+
+	//ros node로부터 imu publisher 관리자 실행;
+	ros::Publisher imu_pub = node.advertise<sensor_msgs::Imu>("sensors/imu",1000);
+	euler_angle = node.advertise<geometry_msgs::Vector3>("target/euler/pose",10);
+	euler_angle_error = node.advertise<geometry_msgs::Vector3>("target/euler/error",10);
+	euler_angle_target = node.advertise<geometry_msgs::Vector3>("target/euler/target",10);
+	//ros zro 서비스를 위한 srv 관리자 실행;
+	ros::Subscriber target_pose_sub = node.subscribe("target/pose", 10, target_pose_update_callback);
+	//ros::Subscriber sensor_pose_sub = node.subscribe("sensors/imu", 10, sensor_pose_update_callback);
+	ros::Publisher target_poserror_pub = node.advertise<geometry_msgs::Pose>("target/error", 10);
+	ros::Publisher target_pose_pub = node.advertise<geometry_msgs::Pose>("target/pose", 10);
+	ros::Publisher fin_pose_pub = node.advertise<geometry_msgs::Pose>("target/fins", 10);
+	ros::ServiceServer zro_srv = node.advertiseService("target/srv/zro", zro_callback);	
+	ros::ServiceServer start_srv = node.advertiseService("target/srv/start", start_callback);	
+	ros::ServiceServer energize_srv = node.advertiseService("target/srv/energize", energize_callback);	
+	//launch trigger 구독
+	ros::Subscriber launch_trigger = node.subscribe("/launch_trigger", 1, launch_callback);
+	
+
+	target.pose.orientation.x = 0;
+	target.pose.orientation.y = 0;
+	target.pose.orientation.z = 0;
+	target.pose.orientation.w = 1;
+	target.pose.position.x = 0;
+	target.pose.position.y = 0;
+	target.pose.position.z = 0;
+	target_pose_pub.publish(target.pose);
+
+
+	sensor.zro.orientation.x = 0;
+	sensor.zro.orientation.y = 0;
+	sensor.zro.orientation.z = 0;
+	sensor.zro.orientation.w = 1;
+	sensor.zro.position.x = ADJUST_ROLL_DEG * M_PI/180.0;
+	sensor.zro.position.y = ADJUST_PITCH_DEG * M_PI/180.0;
+	sensor.zro.position.z = ADJUST_YAW_DEG * M_PI/180.0;
+
+	sensor.air.size.x =AIRSPEED;//m/s
+	sensor.air.size.y =0;
+	sensor.air.size.z =0;
+
+	Fin fins[4] = {"00390833\0","00390839\0","00390840\0","00339447\0"};
+	fins[1].adjust_angle *=2;
+	PID pid[3] = {
+			{	
+				controller.k[0][0],	       
+				controller.k[0][1],
+				controller.k[0][2]
+			},
+			{	
+				controller.k[1][0],	       
+				controller.k[1][1],
+				controller.k[1][2]
+			},
+			{	
+				controller.k[2][0],	       
+				controller.k[2][1],
+				controller.k[2][2]
+			}
+	};
+	PID pi[3] = {
+			{	
+				controller.k[0][0],	       
+				controller.k[0][1],
+				0
+			},
+			{	
+				controller.k[1][0],	       
+				controller.k[1][1],
+				0
+			},
+			{	
+				controller.k[2][0],	       
+				controller.k[2][1],
+				0
+			}
+	};
+	PID pd[3] = {
+			{	
+				controller.k[3][0],	       
+				0,
+				controller.k[3][2]
+			},
+			{	
+				controller.k[4][0],	       
+				0,
+				controller.k[4][2]
+			},
+			{	
+				controller.k[5][0],	       
+				0,
+				controller.k[5][2]
+			}
+	};
+
+	ros::Rate loop_rate(20);
+
+	while(ros::ok()){
+		ros::spinOnce(); // ros event 수신;
+		double angle_x, angle_y, angle_z;
+		int data_ready = 0;
+		double dt;
+		uart.write("acc\n");
+		arg= uart.readline(); // '\n'문자 수신될 때까지 수신;
+		std::string::difference_type length_data;
+		length_data = std::count(arg.begin(), arg.end(), '.');//읽어들인 데이터 포멧 길이 계산;
+		if(length_data==3 && arg.find("acc")!=std::string::npos){//읽어들인 데이터 포멧 프레임 확인;
+			arg.erase(0,arg.find("=")+1);
+			std::string::size_type sz = 0; // arg 파싱용 문자 길이 선언 및 초기화;
+			//가속도계와 각속도계 파싱 저장;
+			imu_msg.linear_acceleration.x = std::stod(arg.erase(0,sz), &sz)*GEE;
+			imu_msg.linear_acceleration.y = std::stod(arg.erase(0,sz), &sz)*GEE;
+			imu_msg.linear_acceleration.z = std::stod(arg.erase(0,sz), &sz)*GEE;
+			data_ready++;
+			uart.write("gyr\n");
+			arg= uart.readline(); // '\n'문자 수신될 때까지 수신;
+			length_data = std::count(arg.begin(), arg.end(), '.');//읽어들인 데이터 포멧 길이 계산;
+		}
+		if(length_data==3 && arg.find("gyr")!=std::string::npos){//읽어들인 데이터 포멧 프레임 확인;
+			arg.erase(0,arg.find("=")+1);
+			std::string::size_type sz = 0; // arg 파싱용 문자 길이 선언 및 초기화;
+			//가속도계와 각속도계 파싱 저장;
+			imu_msg.angular_velocity.x = std::stod(arg.erase(0,sz), &sz) * M_PI/180.0; 
+			imu_msg.angular_velocity.y = std::stod(arg.erase(0,sz), &sz) * M_PI/180.0; 
+			imu_msg.angular_velocity.z = std::stod(arg.erase(0,sz), &sz) * M_PI/180.0; 
+			data_ready++;
+			uart.write("ang\n");
+			arg= uart.readline(); // '\n'문자 수신될 때까지 수신;
+			length_data = std::count(arg.begin(), arg.end(), '.');//읽어들인 데이터 포멧 길이 계산;
+		}
+
+		imu_msg.header.stamp = ros::Time::now(); // 수신완료 시점 기준 시간 기록;
+	
+		if(length_data==3 && arg.find("ang")!=std::string::npos){//읽어들인 데이터 포멧 프레임 확인;
+			arg.erase(0,arg.find("=")+1);
+			std::string::size_type sz = 0; // arg 파싱용 문자 길이 선언 및 초기화;
+			double r,p,y;
+			//오일러각 파싱;
+			angle_x = std::stod(arg.erase(0,sz), &sz) * M_PI/180.0;//rad
+			angle_y = std::stod(arg.erase(0,sz), &sz) * M_PI/180.0;
+			angle_z = std::stod(arg.erase(0,sz), &sz) * M_PI/180.0;
+			r = angle_x - sensor.zro.position.x;
+			p = angle_y - sensor.zro.position.y;
+		       	y = angle_z - sensor.zro.position.z;
+			//쿼터니언 변환 및 저장;
+			geometry_msgs::Vector3 euler_angle_msg;
+			euler_angle_msg.x = r*180.0/M_PI;
+			euler_angle_msg.y = p*180.0/M_PI;
+			euler_angle_msg.z = y*180.0/M_PI;
+			euler_angle.publish(euler_angle_msg);
+
+			//E2Q;
+			imu_msg.orientation.w = cos(y/2)*cos(p/2)*cos(r/2) + sin(y/2)*sin(p/2)*sin(r/2);
+			imu_msg.orientation.x = cos(y/2)*cos(p/2)*sin(r/2) - sin(y/2)*sin(p/2)*cos(r/2);
+			imu_msg.orientation.y = cos(y/2)*sin(p/2)*cos(r/2) + sin(y/2)*cos(p/2)*sin(r/2);
+			imu_msg.orientation.z = sin(y/2)*cos(p/2)*cos(r/2) - cos(y/2)*sin(p/2)*sin(r/2);
+			data_ready++;
+		}
+		if(data_ready==3){
+			static ros::Time stamp;
+			sensor_pose_update(imu_msg);
+			imu_pub.publish(imu_msg);
+			dt = imu_msg.header.stamp.toSec()-stamp.toSec();
+			stamp =	imu_msg.header.stamp; 
+		}
+		else uart.flush();
+		if(request_set_zro)	{
+			request_set_zro = false;
+			sensor.zro.position.x = angle_x;
+			sensor.zro.position.y = angle_y;
+			sensor.zro.position.z = angle_z;
+			sensor.zro.orientation = E2Q(sensor.zro.position);
+			uart.write("zro\n");
+			uart.readline();
+		}
+
+		if(sensor.data_changed){//sub로 값 변화시 한번 실행
+			//after pid requset set zro;
+			if(target.request_set_zro){
+				target.request_set_zro=false;
+				for(int i=0; i<finangle.size(); i++){
+					finangle[i] = 0;
+					finangle[i] = 0;
+				}
+			}
+			if(target.pid_rst_trigger){
+				target.pid_rst_trigger = false;
+				for(int i = 0; i < 3; i++){
+					pd[i].rst();
+					pi[i].rst();
+					pid[i].rst();
+				}
+			}
+			//각도 차이에 대해 요구 각속도 계산
+			geometry_msgs::Vector3 E_pid_v;
+			E_pid_v.x = pi[0].run(-target.poserror.orientation.x,
+					sensor.imu.header.stamp);
+			E_pid_v.y = pi[1].run(-target.poserror.orientation.y,
+					sensor.imu.header.stamp);
+			E_pid_v.z = pi[2].run(-target.poserror.orientation.z,
+					sensor.imu.header.stamp);
+			//각가속도 차이에 대해 요구 각가속도 계산
+			geometry_msgs::Vector3 E_pid;
+			E_pid.x = -pd[0].run(E_pid_v.x - sensor.imu.angular_velocity.x,
+					sensor.imu.header.stamp);
+			E_pid.y = -pd[1].run(E_pid_v.y - sensor.imu.angular_velocity.y,
+					sensor.imu.header.stamp);
+			E_pid.z = -pd[2].run(E_pid_v.z - sensor.imu.angular_velocity.z,
+					sensor.imu.header.stamp);
+
+			/* 원래 코드
+			geometry_msgs::Vector3 E_pid;
+			E_pid.x = pid[0].run(target.poserror.orientation.x,
+				       	ros::Time::now());
+			E_pid.y = pid[1].run(target.poserror.orientation.y,
+				       	ros::Time::now());
+			E_pid.z = pid[2].run(target.poserror.orientation.z,
+				       	ros::Time::now());
+			*/
+
+			//wind_direction-//임시코드 -강제 x방향
+			//get air direction from orientation and velocity vec;
+			
+			//고정좌표 기준 바람방향이 입력, 로켓 자세 기준 벡터 출력
+			//고정좌표의 Orientation 기준은 초기화값.(sensor.imu.oriention);
+			geometry_msgs::Quaternion w, y = Q_Inv(sensor.imu.orientation);
+			w.x = 0;
+			w.y = 0;
+			w.z = 0;
+			w.w = 1;//방위각 기준
+			geometry_msgs::Vector3 wind = VQV(sensor.air.size, y);
+			double w_n = sqrt(wind.x*wind.x + wind.y*wind.y + wind.z*wind.z);
+
+			//air correction angle
+			geometry_msgs::Vector3 angle = Q2E(Q_E(w,sensor.imu.orientation));
+
+			//DEBUG
+			//angle.x /= 2;
+			//angle.y /= 2;
+			//angle.z /= 2;
+			
+			//plent alpha_calc;
+			//sensor.air.velocity = 업데이트 가능;
+			//alpha값 계산부분
+			
+			double req_force[3];
+			//M = rf, f = M/r. M = Ia
+			req_force[0] = E_pid.x*sensor.body.Inerthia[0]/sensor.body.CG_D[0];
+			req_force[1] = E_pid.y*sensor.body.Inerthia[1]/sensor.body.CG_D[1];
+			req_force[2] = E_pid.z*sensor.body.Inerthia[2]/sensor.body.CG_D[2];
+		
+			//req_force[0] /= cos(angle.x);
+			req_force[1] /= cos(angle.y);
+			req_force[2] /= cos(angle.z);
+			//wind랑 merge 하는 부분
+			//-y방향부터 => x회전축 기준 -방향 순서
+			//changed	
+			//DEBUG
+			finangle[0] =  angle.y + fins[0].get_angle_limited(req_force[0]/4 - req_force[1]/2);	
+			finangle[1] = -angle.z + fins[1].get_angle_limited(req_force[0]/4 + req_force[2]/2);	
+			finangle[2] = -angle.y + fins[2].get_angle_limited(req_force[0]/4 + req_force[1]/2);	
+			finangle[3] =  angle.z + fins[3].get_angle_limited(req_force[0]/4 - req_force[2]/2);	//DEBUG at 5m/s
+			
+			//publish용 저장소
+			geometry_msgs::Pose finspose;
+			finspose.orientation.x = finangle[0];
+			finspose.orientation.y = finangle[1];
+			finspose.orientation.z = finangle[2];
+			finspose.orientation.w = finangle[3];
+
+			finangle[3] = -finangle[3]; //4번 핀 역방향 대한 소프트웨어 보정
+			
+			//publish
+			geometry_msgs::Vector3 err = Q2E(target.poserror.orientation);
+			target.poserror.position.x = RAD2DEG(err.x);
+			target.poserror.position.y = RAD2DEG(err.y);
+			target.poserror.position.z = RAD2DEG(err.z);
+			target_poserror_pub.publish(target.poserror);
+			target_poserror_pub.publish(target.poserror);
+			fin_pose_pub.publish(finspose);
+		}
+
+		if(target.request_toggle_energize[0] || target.request_toggle_energize[1]){
+		       	for(int i=0; i<finangle.size(); i++){
+				if(target.request_toggle_energize[0]){
+					fins[i].energize(false);
+				}else{
+					fins[i].energize(true);
+				}
+			}
+			target.request_toggle_energize[0] = false;
+			target.request_toggle_energize[1] = false;
+		}
+		if(target.request_set_start){
+			for(int i=0; i<finangle.size(); i++){
+				fins[i].set_angle(finangle[i]);
+			}
+		}else{
+			fins[0].set_angle(M_PI/2);
+			fins[1].set_angle(0);
+			fins[2].set_angle(-M_PI/2);
+			fins[3].set_angle(0);
+		}
+		loop_rate.sleep();
+	}
+	for(int i=0; i<finangle.size(); i++){
+		fins[i].energize(false);
+	}
+	return 0;
+
+}
+
+
+

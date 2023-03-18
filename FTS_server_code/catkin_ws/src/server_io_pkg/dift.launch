@@ -1,0 +1,6 @@
+<launch>
+	<group>
+		<node pkg="server_io_pkg" type="server_io_pkg_node" name="loadcell"/>
+		<node pkg="server_io_pkg" type="server_i_pkg_node" name="zpos"/>
+	</group>
+</launch>

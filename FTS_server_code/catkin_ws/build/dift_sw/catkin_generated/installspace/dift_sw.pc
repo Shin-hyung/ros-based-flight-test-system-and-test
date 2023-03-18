@@ -1,0 +1,8 @@
+prefix=/home/xavier/catkin_ws/install
+
+Name: dift_sw
+Description: Description of dift_sw
+Version: 0.0.1
+Cflags: -I${prefix}/include
+Libs: -L${prefix}/lib -ldift_sw
+Requires: roscpp std_msgs

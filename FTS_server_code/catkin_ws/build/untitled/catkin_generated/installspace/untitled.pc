@@ -1,0 +1,8 @@
+prefix=/home/xavier/catkin_ws/install
+
+Name: untitled
+Description: Description of untitled
+Version: 1.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: roscpp std_msgs
